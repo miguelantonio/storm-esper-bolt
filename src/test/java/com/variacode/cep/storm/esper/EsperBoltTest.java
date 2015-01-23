@@ -11,28 +11,76 @@ import backtype.storm.tuple.Fields;
 import backtype.storm.tuple.Values;
 import backtype.storm.utils.Utils;
 import com.espertech.esper.client.soda.EPStatementObjectModel;
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.ObjectInput;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutput;
+import java.io.ObjectOutputStream;
+import java.io.OutputStream;
 import java.util.Map;
 import java.util.Set;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
-public class AbstractEsperBoltTest {
+public class EsperBoltTest {
 
     /**
      * Test of execute method, of class AbstractEsperBolt.
      */
     @Test
     public void testExecute() {
+        /*
+       //serialize the List
+    try (
+      OutputStream file = new FileOutputStream("quarks.ser");
+      OutputStream buffer = new BufferedOutputStream(file);
+      ObjectOutput output = new ObjectOutputStream(buffer);
+    ){
+      output.writeObject(new AbstractEsperBolt());
+    }  
+    catch(IOException ex){
+        System.out.println("");
+    }
+
+    //deserialize the quarks.ser file
+    try(
+      InputStream file = new FileInputStream("quarks.ser");
+      InputStream buffer = new BufferedInputStream(file);
+      ObjectInput input = new ObjectInputStream (buffer);
+    ){
+      //deserialize the List
+      AbstractEsperBolt recoveredQuarks = (AbstractEsperBolt)input.readObject();
+      //display its data
+        System.out.println("");
+    }
+    catch(ClassNotFoundException ex){
+        System.out.println("");
+    }
+    catch(IOException ex){
+        System.out.println("");
+    }
+        */
+        
+        
+        
+        
         TopologyBuilder builder = new TopologyBuilder();
         builder.setSpout("word", new RandomSentenceSpout());
-        builder.setBolt("esper", new AbstractEsperBoltImpl())
+        builder.setBolt("esper", (new EsperBolt()).addOutputTypes(null).addStatements(null))
                 .shuffleGrouping("word");
 
         Config conf = new Config();
         LocalCluster cluster = new LocalCluster();
-
+try{
         cluster.submitTopology("test", conf, builder.createTopology());
-
+}catch(RuntimeException e){
+    System.out.println("");
+}
         Utils.sleep(20000);
         cluster.shutdown();
 
@@ -44,25 +92,10 @@ public class AbstractEsperBoltTest {
         fail("The test case is a prototype.");
     }
 
-    public class AbstractEsperBoltImpl extends AbstractEsperBolt {
+    public static class RandomSentenceSpout extends BaseRichSpout {
 
-        public Map<String,Class> getEventTypes() {
-            return null;
-        }
-
-        public Set<String> getEPLStatements() {
-            return null;
-        }
-
-        public Set<EPStatementObjectModel> getEPObjectStatements() {
-            return null;
-        }
-    }
-
-    public class RandomSentenceSpout extends BaseRichSpout {
-
-        SpoutOutputCollector _collector;
-        int i = 0;
+        transient SpoutOutputCollector _collector;
+        transient int i;
 
         @Override
         public void open(Map conf, TopologyContext context, SpoutOutputCollector collector) {
