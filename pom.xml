@@ -3,8 +3,35 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.variacode.cep.storm.esper</groupId>
     <artifactId>StormEsperBolt</artifactId>
-    <version>0.1-SNAPSHOT</version>
+    <version>0.1</version>
     <packaging>jar</packaging>
+        
+    <name>${project.artifactId}</name>
+    <description>Simple bolt that has an Esper instance inside for complex event processing with Storm</description>
+    <url>https://github.com/miguelantonio/storm-esper-bolt</url>
+    
+    <licenses>
+        <license>
+            <name>The Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.txt</url>
+        </license>
+    </licenses>
+    
+    <developers>
+        <developer>
+            <name>Miguel Fuentes</name>
+            <email>miguel@variacode.com</email>
+            <organization>Variacode</organization>
+            <organizationUrl>http://variacode.com</organizationUrl>
+        </developer>
+    </developers>
+    
+    <scm>
+        <connection>scm:git:git@github.com:miguelantonio/storm-esper-bolt.git</connection>
+        <developerConnection>scm:git:git@miguelantonio/storm-esper-bolt.git</developerConnection>
+        <url>git@github.com:miguelantonio/storm-esper-bolt.git</url>
+    </scm>
+    
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>1.7</maven.compiler.source>
@@ -28,4 +55,35 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>2.3</version>
+                <executions>
+                    <execution>
+                        <id>attach-javadocs</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>2.0.4</version>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
