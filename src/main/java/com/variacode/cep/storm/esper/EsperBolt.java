@@ -15,7 +15,6 @@ import com.espertech.esper.client.EventBean;
 import com.espertech.esper.client.UpdateListener;
 import com.espertech.esper.client.soda.EPStatementObjectModel;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -91,12 +90,7 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
             if (!this.eventTypes.keySet().containsAll(f.toList())) {
                 throw new RuntimeException();//TODO: please die..
             }
-            /*String[] flds_pls = new String[this.eventTypes.size()];
-            this.eventTypes.keySet().toArray(flds_pls);
-            Class[] clss_pls = new Class[this.eventTypes.size()];
-            this.eventTypes.values().toArray(clss_pls);*/
             cepConfig.addEventType(a.getKey().get_componentId() + "_" + a.getKey().get_streamId(), this.eventTypes);
-            System.out.println("ADD EVENT: " + a.getKey().get_componentId() + "_" + a.getKey().get_streamId() + " " + this.eventTypes.keySet().toString()+" "+this.eventTypes.values().toString());
         }
         this.epService = EPServiceProviderManager.getDefaultProvider(cepConfig);
         this.epService.initialize();
