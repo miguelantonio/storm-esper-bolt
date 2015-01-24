@@ -21,18 +21,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-public class EsperBolt extends BaseRichBolt {
+public class EsperBolt extends BaseRichBolt implements UpdateListener {
 
     private static final long serialVersionUID = 1L;
 
-    private transient OutputCollector collector;
+    private OutputCollector collector;
     private transient EPServiceProvider epService;
     private Map<String, List<String>> outputTypes;
+    private Map<String, Class> eventTypes;
     private Set<String> statements;
     private Set<EPStatementObjectModel> objectStatements;
 
     public EsperBolt addOutputTypes(Map<String, List<String>> types) {
-        this.outputTypes = Collections.unmodifiableMap(exceptionIfNull(types));//TODO: make sure the user cannot change this because not
+        //TODO: make sure the user cannot change this because not
+        this.outputTypes = Collections.unmodifiableMap(exceptionIfNull(types));
+        return this;
+    }
+
+    public EsperBolt addEventTypes(Map<String, Class> types) {
+        this.eventTypes = Collections.unmodifiableMap(exceptionIfNull(types));
         return this;
     }
 
@@ -52,25 +59,6 @@ public class EsperBolt extends BaseRichBolt {
         }
         return obj;
     }
-
-    private final UpdateListener eventListener = new UpdateListener() {
-
-        @Override
-        public void update(EventBean[] newEvents, EventBean[] oldEvents) {
-            if (newEvents != null) {
-                for (EventBean newEvent : newEvents) {
-                    if (outputTypes.containsKey(newEvent.getEventType().getName())) {
-                        List<Object> tuple = new ArrayList<>(outputTypes.get(newEvent.getEventType().getName()).size());
-                        for (String field : outputTypes.get(newEvent.getEventType().getName())) {
-                            tuple.add(newEvent.get(field));
-                        }
-                        collector.emit(newEvent.getEventType().getName(), tuple);
-                    }//TODO: think about what to do with your life here
-                }
-            }
-        }
-
-    };
 
     @Override
     public void declareOutputFields(OutputFieldsDeclarer ofd) {
@@ -94,23 +82,30 @@ public class EsperBolt extends BaseRichBolt {
     public void prepare(@SuppressWarnings("rawtypes") Map map, TopologyContext tc, OutputCollector oc) {
         this.collector = oc;
         Configuration cepConfig = new Configuration();
-        if (this.objectStatements == null && this.statements == null) {
+        if (this.eventTypes == null || (this.objectStatements == null && this.statements == null)) {
             throw new RuntimeException();//TODO: FUCK YOU (fix)
         }
         for (Map.Entry<GlobalStreamId, Grouping> a : tc.getThisSources().entrySet()) {
             Fields f = tc.getComponentOutputFields(a.getKey());
-            cepConfig.addEventType(a.getKey().get_componentId() + "+" + a.getKey().get_streamId(), (String[]) f.toList().toArray(), Collections.nCopies(f.size(), Object.class).toArray());
+            if (!this.eventTypes.keySet().containsAll(f.toList())) {
+                throw new RuntimeException();//TODO: please die..
+            }
+            String[] flds_pls = new String[this.eventTypes.size()];
+            this.eventTypes.keySet().toArray(flds_pls);
+            Class[] clss_pls = new Class[this.eventTypes.size()];
+            this.eventTypes.values().toArray(clss_pls);
+            cepConfig.addEventType(a.getKey().get_componentId() + "_" + a.getKey().get_streamId(), flds_pls, clss_pls);
         }
         this.epService = EPServiceProviderManager.getDefaultProvider(cepConfig);
         this.epService.initialize();
         if (this.statements != null) {
             for (String s : this.statements) {
-                this.epService.getEPAdministrator().createEPL(s).addListener(this.eventListener);
+                this.epService.getEPAdministrator().createEPL(s).addListener(this);
             }
         }
         if (this.objectStatements != null) {
             for (EPStatementObjectModel s : this.objectStatements) {
-                this.epService.getEPAdministrator().create(s).addListener(this.eventListener);
+                this.epService.getEPAdministrator().create(s).addListener(this);
             }
         }
     }
@@ -129,6 +124,21 @@ public class EsperBolt extends BaseRichBolt {
     public void cleanup() {
         if (this.epService != null) {
             this.epService.destroy();
+        }
+    }
+
+    @Override
+    public void update(EventBean[] newEvents, EventBean[] oldEvents) {
+        if (newEvents != null) {
+            for (EventBean newEvent : newEvents) {
+                if (outputTypes.containsKey(newEvent.getEventType().getName())) {
+                    List<Object> tuple = new ArrayList<>(outputTypes.get(newEvent.getEventType().getName()).size());
+                    for (String field : outputTypes.get(newEvent.getEventType().getName())) {
+                        tuple.add(newEvent.get(field));
+                    }
+                    collector.emit(newEvent.getEventType().getName(), tuple);
+                }//TODO: think about what to do with your life here
+            }
         }
     }
 

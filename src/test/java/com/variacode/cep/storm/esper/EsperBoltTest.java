@@ -10,85 +10,45 @@ import backtype.storm.topology.base.BaseRichSpout;
 import backtype.storm.tuple.Fields;
 import backtype.storm.tuple.Values;
 import backtype.storm.utils.Utils;
-import com.espertech.esper.client.soda.EPStatementObjectModel;
-import java.io.BufferedInputStream;
-import java.io.BufferedOutputStream;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.ObjectInput;
-import java.io.ObjectInputStream;
-import java.io.ObjectOutput;
-import java.io.ObjectOutputStream;
-import java.io.OutputStream;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class EsperBoltTest {
 
     /**
-     * Test of execute method, of class AbstractEsperBolt.
+     * Test of execute method, of class EsperBolt.
      */
     @Test
     public void testExecute() {
-        /*
-       //serialize the List
-    try (
-      OutputStream file = new FileOutputStream("quarks.ser");
-      OutputStream buffer = new BufferedOutputStream(file);
-      ObjectOutput output = new ObjectOutputStream(buffer);
-    ){
-      output.writeObject(new AbstractEsperBolt());
-    }  
-    catch(IOException ex){
-        System.out.println("");
-    }
 
-    //deserialize the quarks.ser file
-    try(
-      InputStream file = new FileInputStream("quarks.ser");
-      InputStream buffer = new BufferedInputStream(file);
-      ObjectInput input = new ObjectInputStream (buffer);
-    ){
-      //deserialize the List
-      AbstractEsperBolt recoveredQuarks = (AbstractEsperBolt)input.readObject();
-      //display its data
-        System.out.println("");
-    }
-    catch(ClassNotFoundException ex){
-        System.out.println("");
-    }
-    catch(IOException ex){
-        System.out.println("");
-    }
-        */
-        
-        
-        
+        Map<String, Class> eventTypes = new HashMap<>();//should say fieldsTypes, maybe with object/component prefix
+        eventTypes.put("symbol", String.class);
+        eventTypes.put("price", Integer.class);
         
         TopologyBuilder builder = new TopologyBuilder();
-        builder.setSpout("word", new RandomSentenceSpout());
-        builder.setBolt("esper", (new EsperBolt()).addOutputTypes(null).addStatements(null))
-                .shuffleGrouping("word");
+        builder.setSpout("quotes", new RandomSentenceSpout());
+        builder.setBolt("esper", (new EsperBolt())
+                .addEventTypes(eventTypes)
+                .addOutputTypes(Collections.singletonMap("result", Arrays.asList("avg", "price")))
+                .addStatements(Collections.singleton("select avg(price) as avg, price from "
+                                + "quotes_default(symbol='A').win:length(2) "
+                                + "having avg(price) > 3.0")))
+                .shuffleGrouping("quotes");
 
         Config conf = new Config();
         LocalCluster cluster = new LocalCluster();
-try{
+        //try {
         cluster.submitTopology("test", conf, builder.createTopology());
-}catch(RuntimeException e){
-    System.out.println("");
-}
+        /*} catch (RuntimeException e) {
+         System.out.println("");
+         }*/
         Utils.sleep(20000);
         cluster.shutdown();
 
-        /*System.out.println("execute");
-         Tuple tuple = null;
-         AbstractEsperBolt instance = new AbstractEsperBoltImpl();
-         instance.execute(tuple);*/
-        // TODO review the generated test code and remove the default call to fail.
         fail("The test case is a prototype.");
     }
 
@@ -105,22 +65,29 @@ try{
         @Override
         public void nextTuple() {
             Utils.sleep(500);
-            String[] sentences = new String[]{"the cow jumped over the moon", "an apple a day keeps the doctor away",
-                "four score and seven years ago", "snow white and the seven dwarfs", "i am at two with nature"};
-            final String stnc = sentences[i%sentences.length];
-            
-            Object event = new Object(){
-                private final String sentence;
-                {
-                    this.sentence = stnc;
-                }
-                public String getSentence(){
-                    return sentence;
-                }
-            };
-            
+            String[] sentences = new String[]{"A", "B"};
+            int[] prices = new int[]{4, 2, 1, 6, 7, 4, 6, 4, 2, 4, 4, 3, 2, 4, 4, 5, 5, 6, 6, 4, 3, 4, 4};
+            String stnc = sentences[i % sentences.length];
+            int prc = prices[i % prices.length];
+            /*
+             Object event = new Object() {
+             private final String symbol;
+             private final int price;
+
+             {
+             this.symbol = stnc;
+             this.price = prc;
+             }
+             public int getPrice(){
+             return price;
+             }
+             public String getSentence() {
+             return symbol;
+             }
+             };
+             */
             i++;
-            _collector.emit(new Values(event));
+            _collector.emit(new Values(stnc, prc));
         }
 
         @Override
@@ -133,7 +100,7 @@ try{
 
         @Override
         public void declareOutputFields(OutputFieldsDeclarer declarer) {
-            declarer.declare(new Fields("word"));
+            declarer.declare(new Fields("symbol", "price"));
         }
 
     }
