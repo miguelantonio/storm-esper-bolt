@@ -25,31 +25,27 @@ public class EsperBoltTest {
     @Test
     public void testExecute() {
 
-        Map<String, Class> eventTypes = new HashMap<>();//should say fieldsTypes, maybe with object/component prefix
+        Map<String, Object> eventTypes = new HashMap<>();//should say fieldsTypes, maybe with object/component prefix
         eventTypes.put("symbol", String.class);
         eventTypes.put("price", Integer.class);
-        
+
         TopologyBuilder builder = new TopologyBuilder();
         builder.setSpout("quotes", new RandomSentenceSpout());
         builder.setBolt("esper", (new EsperBolt())
                 .addEventTypes(eventTypes)
-                .addOutputTypes(Collections.singletonMap("result", Arrays.asList("avg", "price")))
-                .addStatements(Collections.singleton("select avg(price) as avg, price from "
+                .addOutputTypes(Collections.singletonMap("Result", Arrays.asList("avg", "price")))
+                .addStatements(Collections.singleton("insert into Result "
+                                + "select avg(price) as avg, price from "
                                 + "quotes_default(symbol='A').win:length(2) "
                                 + "having avg(price) > 3.0")))
                 .shuffleGrouping("quotes");
 
         Config conf = new Config();
         LocalCluster cluster = new LocalCluster();
-        //try {
         cluster.submitTopology("test", conf, builder.createTopology());
-        /*} catch (RuntimeException e) {
-         System.out.println("");
-         }*/
         Utils.sleep(20000);
         cluster.shutdown();
-
-        fail("The test case is a prototype.");
+        fail("NOOOOOOOOOOOOO");
     }
 
     public static class RandomSentenceSpout extends BaseRichSpout {
@@ -69,23 +65,6 @@ public class EsperBoltTest {
             int[] prices = new int[]{4, 2, 1, 6, 7, 4, 6, 4, 2, 4, 4, 3, 2, 4, 4, 5, 5, 6, 6, 4, 3, 4, 4};
             String stnc = sentences[i % sentences.length];
             int prc = prices[i % prices.length];
-            /*
-             Object event = new Object() {
-             private final String symbol;
-             private final int price;
-
-             {
-             this.symbol = stnc;
-             this.price = prc;
-             }
-             public int getPrice(){
-             return price;
-             }
-             public String getSentence() {
-             return symbol;
-             }
-             };
-             */
             i++;
             _collector.emit(new Values(stnc, prc));
         }
