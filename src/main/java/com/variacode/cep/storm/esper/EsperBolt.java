@@ -30,6 +30,7 @@ import com.espertech.esper.client.EPServiceProviderManager;
 import com.espertech.esper.client.EventBean;
 import com.espertech.esper.client.UpdateListener;
 import com.espertech.esper.client.soda.EPStatementObjectModel;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -60,13 +61,21 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
      */
     public EsperBolt addOutputTypes(Map<String, List<String>> types) {
         String error = "Output Types cannot be null";
-        this.outputTypes = Collections.unmodifiableMap(exceptionIfNull(error, types));
         exceptionIfAnyNull(error, types.values());
         for (List<String> s : types.values()) {
             exceptionIfAnyNull(error, s);
         }
         exceptionIfAnyNull(error, types.keySet());
+        this.outputTypes = Collections.unmodifiableMap(exceptionIfNull(error, types));
         return this;
+    }
+
+    public EsperBolt addEventTypes(Class bean) {
+        Map<String, Object> types = new HashMap<>();
+        for (Field f : bean.getDeclaredFields()) {
+            types.put(f.getName(), f.getType());
+        }
+        return addEventTypes(types);
     }
 
     /**
