@@ -28,6 +28,7 @@ import backtype.storm.tuple.Fields;
 import backtype.storm.tuple.Tuple;
 import backtype.storm.tuple.Values;
 import backtype.storm.utils.Utils;
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
@@ -56,7 +57,8 @@ public class EsperBoltStressTest {
     private static final String LITERAL_RETURN_OBJ = "Result";
     private static final String LITERAL_ESPER = "esper";
     private static final String LITERAL_QUOTES = "quotes";
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
+    private static final int MAX_INPUT_FILES = 1;
 
     private static void write(String msg) {
         Logger.getLogger(EsperBoltStressTest.class.getName()).log(Level.INFO, msg);
@@ -77,6 +79,7 @@ public class EsperBoltStressTest {
 
         Logger.getLogger(EsperBoltStressTest.class.getName()).log(Level.INFO, "EngineTest-EPL");
         TopologyBuilder builder = new TopologyBuilder();
+        
         builder.setSpout(LITERAL_QUOTES, new SpreadSpout());
         builder.setBolt(LITERAL_ESPER, (new EsperBolt())
                 .addEventTypes(ForexSpreadTestBean.class)
@@ -85,21 +88,38 @@ public class EsperBoltStressTest {
                 .addStatements(Collections.singleton("insert into Result "
                                 + "select avg(buyPrice) as avg, buyPrice from "
                                 + "quotes_default(symbol='AUD/USD').win:length(2) "
-                                + "having avg(buyPrice) > 0.0")))
+                                + "having avg(buyPrice) > 1.0")))
                 .shuffleGrouping(LITERAL_QUOTES);
         builder.setBolt("print", new PrinterBolt()).shuffleGrouping(LITERAL_ESPER, LITERAL_RETURN_OBJ);
 
         Config conf = new Config();
         LocalCluster cluster = new LocalCluster();
         cluster.submitTopology("test", conf, builder.createTopology());
-        startMilis = System.currentTimeMillis();
-        Utils.sleep(15000);
+        
+        Utils.sleep(10000);
         cluster.shutdown();
         write("TUPLAS PROCESADAS: " + tuplesCount);
         write("MILISEGUNDOS: " + (endMilis - startMilis));
         write("VELOCIDAD: " + (tuplesCount / (endMilis - startMilis)) + " TUPLAS/MILISEGUNDO");
         assertEquals(true, true);
     }
+
+    public static class ComparableFileByModified implements Comparable {
+
+        public long t;
+        public File f;
+
+        public ComparableFileByModified(File file) {
+            f = file;
+            t = file.lastModified();
+        }
+
+        @Override
+        public int compareTo(Object o) {
+            long u = ((ComparableFileByModified) o).t;
+            return t < u ? -1 : t == u ? 0 : 1;
+        }
+    };
 
     /**
      *
@@ -113,8 +133,8 @@ public class EsperBoltStressTest {
          */
         @Override
         public void execute(Tuple tuple, BasicOutputCollector collector) {
+            
             log("PRICE: " + tuple.getDoubleByField("buyPrice") + " - AVG: " + tuple.getDoubleByField("avg"));
-            endMilis = System.currentTimeMillis();
         }
 
         /**
@@ -135,7 +155,8 @@ public class EsperBoltStressTest {
 
         transient SpoutOutputCollector collector;
         transient CellProcessor[] processors;
-        transient ICsvBeanReader beanReader;
+        transient ICsvBeanReader[] beanReader;
+        transient int beanReaderCount;
 
         /**
          *
@@ -145,17 +166,29 @@ public class EsperBoltStressTest {
          */
         @Override
         public void open(Map conf, TopologyContext context, SpoutOutputCollector collector) {
+            
             this.collector = collector;
             CellProcessor[] p = {new Optional(), new Optional(),
                 new Optional(new Token(" ", null, new ParseDate("yyyy-MM-dd HH:mm:ss.SSS", true))),
                 new Optional(new ParseDouble()), new Optional(new ParseDouble()), new Optional()};
             this.processors = p;
-            try {
-                this.beanReader = new CsvBeanReader(new FileReader("src/test/resources/AUD_USD_Week1.CSV"), CsvPreference.STANDARD_PREFERENCE);
-            } catch (FileNotFoundException ex) {
-                Logger.getLogger(EsperBoltStressTest.class.getName()).log(Level.SEVERE, null, ex);
-                this.beanReader = null;
+            File[] files = (new File("src/test/resources")).listFiles();
+            ComparableFileByModified[] pairs = new ComparableFileByModified[files.length];
+            for (int i = 0; i < files.length; i++) {
+                pairs[i] = new ComparableFileByModified(files[i]);
             }
+            Arrays.sort(pairs);
+            this.beanReader = new CsvBeanReader[files.length];
+            for (int i = 0; i < pairs.length; i++) {
+                try {
+                    this.beanReader[i] = new CsvBeanReader(new FileReader(pairs[i].f), CsvPreference.STANDARD_PREFERENCE);
+                } catch (FileNotFoundException ex) {
+                    Logger.getLogger(EsperBoltStressTest.class.getName()).log(Level.SEVERE, null, ex);
+                    this.beanReader[i] = null;
+                }
+            }
+            this.beanReaderCount = 0;
+            startMilis = System.currentTimeMillis();
         }
 
         /**
@@ -163,17 +196,22 @@ public class EsperBoltStressTest {
          */
         @Override
         public void nextTuple() {
-            if (this.beanReader != null) {
-                tuplesCount++;
-                ForexSpreadTestBean spread;
-                try {
-                    if ((spread = beanReader.read(ForexSpreadTestBean.class, EsperBoltStressTest.header, processors)) != null) {
-                        log(String.format("lineNo=%s, rowNo=%s, spread=%s", beanReader.getLineNumber(),
-                                beanReader.getRowNumber(), spread));
-                        this.collector.emit(new Values(spread.getId(), spread.getSymbol(), spread.getDatetime(), spread.getBuyPrice(), spread.getSellPrice(), spread.getType()));
+            if (beanReaderCount < this.beanReader.length && beanReaderCount < MAX_INPUT_FILES) {
+                if (this.beanReader[beanReaderCount] != null) {
+                    tuplesCount++;
+                    ForexSpreadTestBean spread;
+                    try {
+                        if ((spread = beanReader[beanReaderCount].read(ForexSpreadTestBean.class, EsperBoltStressTest.header, processors)) != null) {
+                            log(String.format("lineNo=%s, rowNo=%s, spread=%s", beanReader[beanReaderCount].getLineNumber(),
+                                    beanReader[beanReaderCount].getRowNumber(), spread));
+                            this.collector.emit(new Values(spread.getId(), spread.getSymbol(), spread.getDatetime(), spread.getBuyPrice(), spread.getSellPrice(), spread.getType()));
+                            endMilis = System.currentTimeMillis();
+                        }
+                    } catch (IOException ex) {
+                        Logger.getLogger(EsperBoltStressTest.class.getName()).log(Level.SEVERE, null, ex);
                     }
-                } catch (IOException ex) {
-                    Logger.getLogger(EsperBoltStressTest.class.getName()).log(Level.SEVERE, null, ex);
+                } else {
+                    beanReaderCount++;
                 }
             }
         }
