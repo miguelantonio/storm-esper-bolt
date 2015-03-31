@@ -114,7 +114,8 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
         exceptionIfAnyNull(error, objectStatements);
         return this;
     }
-
+    
+    //TODO: Send this to Utils or somntsdf.
     private <O> O exceptionIfNull(String msg, O obj) {
         exceptionIfAnyNull(msg, obj);
         return obj;

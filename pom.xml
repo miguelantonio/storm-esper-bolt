@@ -3,7 +3,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.variacode.cep.storm.esper</groupId>
     <artifactId>storm-esper-bolt</artifactId>
-    <version>0.1-SNAPSHOT</version>
+    <version>0.1</version>
     <packaging>jar</packaging>
         
     <name>${project.artifactId}</name>
