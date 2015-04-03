@@ -46,10 +46,6 @@ import java.util.logging.Logger;
 import org.junit.Test;
 import static org.junit.Assert.*;
 
-/**
- *
- *
- */
 public class EsperBoltTest {
 
     private static Map<Integer, Double> resultEPL = new HashMap<>();

@@ -27,6 +27,7 @@ import backtype.storm.tuple.Tuple;
 import com.espertech.esper.client.Configuration;
 import com.espertech.esper.client.EPServiceProvider;
 import com.espertech.esper.client.EPServiceProviderManager;
+import com.espertech.esper.client.EPStatementException;
 import com.espertech.esper.client.EventBean;
 import com.espertech.esper.client.UpdateListener;
 import com.espertech.esper.client.soda.EPStatementObjectModel;
@@ -53,6 +54,18 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
     private Map<String, Object> eventTypes;
     private Set<String> statements;
     private Set<EPStatementObjectModel> objectStatements;
+
+    public static void checkEPLSyntax(String statement) throws EsperBoltException {
+        Configuration cepConfig = new Configuration();
+        EPServiceProvider service = EPServiceProviderManager.getDefaultProvider(cepConfig);
+        service.initialize();
+        try {
+            service.getEPAdministrator().prepareEPL(statement);
+        } catch (EPStatementException e) {
+            throw new EsperBoltException(e.getMessage(), e);
+        }
+        service.destroy();
+    }
 
     /**
      *
@@ -114,8 +127,7 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
         exceptionIfAnyNull(error, objectStatements);
         return this;
     }
-    
-    //TODO: Send this to Utils or somntsdf.
+
     private <O> O exceptionIfNull(String msg, O obj) {
         exceptionIfAnyNull(msg, obj);
         return obj;
