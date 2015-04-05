@@ -248,12 +248,14 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
             return;
         }
         for (EventBean newEvent : newEvents) {
-            List<Object> tuple = new ArrayList<>(outputTypes.get(newEvent.getEventType().getName()).size());
+            List<Object> tuple = new ArrayList<>();
             String eventType;
             if (outputTypes.containsKey(newEvent.getEventType().getName())) {
                 eventType = newEvent.getEventType().getName();
                 for (String field : outputTypes.get(newEvent.getEventType().getName())) {
-                    tuple.add(newEvent.get(field));
+                    if (newEvent.get(field) != null) {
+                        tuple.add(newEvent.get(field));
+                    }
                 }
             } else {
                 eventType = "default";
