@@ -65,3 +65,4 @@ src/test/resources/USD_JPY_Week1.CSV
 src/test/resources/USD_JPY_Week2.CSV
 src/test/resources/USD_JPY_Week3.CSV
 src/test/resources/USD_JPY_Week4.CSV
+/target/
