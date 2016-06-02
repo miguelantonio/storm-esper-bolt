@@ -5,7 +5,7 @@ Library that integrates [Esper](http://esper.codehaus.org) as a [Storm](https://
 
 ## License
 
-[The Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.txt).
+[GPLv2](http://www.gnu.org/licenses/old-licenses/gpl-2.0.txt).
 
 
 ## Description
