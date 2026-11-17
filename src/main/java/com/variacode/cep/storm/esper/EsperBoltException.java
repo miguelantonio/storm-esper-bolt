@@ -17,6 +17,12 @@ package com.variacode.cep.storm.esper;
 
 public class EsperBoltException extends Exception {
 
+    private static final long serialVersionUID = 1L;
+
+    public EsperBoltException(String msg) {
+        super(msg);
+    }
+
     public EsperBoltException(String msg, Throwable err) {
         super(msg, err);
     }

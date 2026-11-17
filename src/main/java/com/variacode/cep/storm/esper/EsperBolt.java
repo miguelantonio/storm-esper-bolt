@@ -15,21 +15,35 @@
  */
 package com.variacode.cep.storm.esper;
 
-import com.espertech.esper.client.Configuration;
-import com.espertech.esper.client.EPServiceProvider;
-import com.espertech.esper.client.EPServiceProviderManager;
-import com.espertech.esper.client.EPStatementException;
-import com.espertech.esper.client.EventBean;
-import com.espertech.esper.client.UpdateListener;
-import com.espertech.esper.client.soda.EPStatementObjectModel;
+import com.espertech.esper.common.client.configuration.Configuration;
+import com.espertech.esper.common.client.EPCompiled;
+import com.espertech.esper.common.client.EventBean;
+import com.espertech.esper.common.client.module.Module;
+import com.espertech.esper.common.client.module.ModuleItem;
+import com.espertech.esper.common.client.soda.EPStatementObjectModel;
+import com.espertech.esper.common.client.util.EventTypeBusModifier;
+import com.espertech.esper.compiler.client.CompilerArguments;
+import com.espertech.esper.compiler.client.EPCompileException;
+import com.espertech.esper.compiler.client.EPCompilerProvider;
+import com.espertech.esper.runtime.client.EPDeployException;
+import com.espertech.esper.runtime.client.EPDeployment;
+import com.espertech.esper.runtime.client.EPRuntime;
+import com.espertech.esper.runtime.client.EPRuntimeProvider;
+import com.espertech.esper.runtime.client.EPStatement;
+import com.espertech.esper.runtime.client.UpdateListener;
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.apache.storm.generated.GlobalStreamId;
 import org.apache.storm.generated.Grouping;
 import org.apache.storm.task.OutputCollector;
@@ -41,100 +55,186 @@ import org.apache.storm.tuple.Fields;
 import org.apache.storm.tuple.Tuple;
 
 /**
- *
- *
+ * Storm Bolt that embeds an Esper runtime instance for Complex Event Processing.
  */
 public class EsperBolt extends BaseRichBolt implements UpdateListener {
 
     private static final long serialVersionUID = 1L;
 
     private OutputCollector collector;
-    private transient EPServiceProvider epService;
+    private transient EPRuntime epRuntime;
     private Map<String, List<String>> outputTypes;
     private Map<String, Object> eventTypes;
     private Set<String> statements;
     private Set<EPStatementObjectModel> objectStatements;
 
     public static void checkEPLSyntax(String statement) throws EsperBoltException {
-        Configuration cepConfig = new Configuration();
-        EPServiceProvider service = EPServiceProviderManager.getDefaultProvider(cepConfig);
-        service.initialize();
+        if (statement == null || statement.trim().isEmpty()) {
+            throw new EsperBoltException("Statement cannot be null or empty");
+        }
         try {
-            service.getEPAdministrator().prepareEPL(statement);
-        } catch (EPStatementException e) {
+            EPCompilerProvider.getCompiler().eplToModel(statement, new Configuration());
+        } catch (EPCompileException e) {
             throw new EsperBoltException(e.getMessage(), e);
         }
-        service.destroy();
     }
 
     /**
+     * Declares output streams and their field names using a Map.
      *
-     * @param types
-     * @return
+     * @param types map from output stream / event type name to ordered list of field names
+     * @return this bolt instance
      */
     public EsperBolt addOutputTypes(Map<String, List<String>> types) {
         String error = "Output Types cannot be null";
-        exceptionIfAnyNull(error, types.values());
-        for (List<String> s : types.values()) {
-            exceptionIfAnyNull(error, s);
+        exceptionIfNull(error, types);
+        exceptionIfCollectionHasNull(error, types.keySet());
+        exceptionIfCollectionHasNull(error, types.values());
+        Map<String, List<String>> copy = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : types.entrySet()) {
+            List<String> fields = entry.getValue();
+            exceptionIfCollectionHasNull(error, fields);
+            copy.put(entry.getKey(), Collections.unmodifiableList(new ArrayList<>(fields)));
         }
-        exceptionIfAnyNull(error, types.keySet());
-        this.outputTypes = Collections.unmodifiableMap(exceptionIfNull(error, types));
+        this.outputTypes = Collections.unmodifiableMap(copy);
         return this;
     }
 
-    public EsperBolt addEventTypes(Class bean) {
-        Map<String, Object> types = new HashMap<>();
+    /**
+     * Declares output streams and their field names from one or more POJO classes.
+     * Each POJO's simple class name is used as the stream/event type name, and its
+     * non-static, non-synthetic declared fields define the output fields.
+     *
+     * @param beans one or more POJO classes describing output event types
+     * @return this bolt instance
+     */
+    public EsperBolt addOutputTypes(Class<?>... beans) {
+        String error = "Output Types cannot be null";
+        exceptionIfNull(error, beans);
+        if (beans.length == 0) {
+            throw new FailedException(error);
+        }
+        exceptionIfAnyNull(error, (Object[]) beans);
+        return addOutputTypes(new LinkedHashSet<>(Arrays.asList(beans)));
+    }
+
+    /**
+     * Declares output streams and their field names from a set of POJO classes.
+     *
+     * @param beans set of POJO classes describing output event types
+     * @return this bolt instance
+     */
+    public EsperBolt addOutputTypes(Set<Class<?>> beans) {
+        String error = "Output Types cannot be null";
+        exceptionIfNull(error, beans);
+        if (beans.isEmpty()) {
+            throw new FailedException(error);
+        }
+        exceptionIfCollectionHasNull(error, beans);
+        Map<String, List<String>> types = new LinkedHashMap<>();
+        if (this.outputTypes != null) {
+            types.putAll(this.outputTypes);
+        }
+        for (Class<?> bean : beans) {
+            List<String> fields = new ArrayList<>();
+            for (Field f : bean.getDeclaredFields()) {
+                if (!Modifier.isStatic(f.getModifiers()) && !f.isSynthetic()) {
+                    fields.add(f.getName());
+                }
+            }
+            types.put(bean.getSimpleName(), fields);
+        }
+        return addOutputTypes(types);
+    }
+
+    public EsperBolt addEventTypes(Class<?> bean) {
+        String error = "Event types cannot be null";
+        exceptionIfNull(error, bean);
+        Map<String, Object> types = new LinkedHashMap<>();
         for (Field f : bean.getDeclaredFields()) {
-            types.put(f.getName(), f.getType());
+            if (!Modifier.isStatic(f.getModifiers()) && !f.isSynthetic()) {
+                types.put(f.getName(), f.getType());
+            }
         }
         return addEventTypes(types);
     }
 
     /**
+     * Declares input event property names and their types.
      *
-     * @param types
-     * @return
+     * @param types map from field name to Java type
+     * @return this bolt instance
      */
     public EsperBolt addEventTypes(Map<String, Object> types) {
         String error = "Event types cannot be null";
-        this.eventTypes = Collections.unmodifiableMap(exceptionIfNull(error, types));
-        exceptionIfAnyNull(error, types.values());
-        exceptionIfAnyNull(error, types.keySet());
+        exceptionIfNull(error, types);
+        exceptionIfCollectionHasNull(error, types.keySet());
+        exceptionIfCollectionHasNull(error, types.values());
+        this.eventTypes = Collections.unmodifiableMap(new LinkedHashMap<>(types));
         return this;
     }
 
     /**
+     * Adds EPL query statements to execute in the Esper runtime.
      *
-     * @param statements
-     * @return
+     * @param statements set of EPL statement strings
+     * @return this bolt instance
      */
     public EsperBolt addStatements(Set<String> statements) {
         String error = "Statements cannot be null";
-        this.statements = Collections.unmodifiableSet(exceptionIfNull(error, statements));
-        exceptionIfAnyNull(error, statements);
+        exceptionIfNull(error, statements);
+        exceptionIfCollectionHasNull(error, statements);
+        this.statements = Collections.unmodifiableSet(new LinkedHashSet<>(statements));
         return this;
     }
 
     /**
+     * Adds SODA object model statements to execute in the Esper runtime.
      *
-     * @param objectStatements
-     * @return
+     * @param objectStatements set of SODA statement models
+     * @return this bolt instance
      */
-    public EsperBolt addObjectStatemens(Set<EPStatementObjectModel> objectStatements) {
+    public EsperBolt addObjectStatements(Set<EPStatementObjectModel> objectStatements) {
         final String error = "Object Statements cannot be null";
-        this.objectStatements = Collections.unmodifiableSet(exceptionIfNull(error, objectStatements));
-        exceptionIfAnyNull(error, objectStatements);
+        exceptionIfNull(error, objectStatements);
+        exceptionIfCollectionHasNull(error, objectStatements);
+        this.objectStatements = Collections.unmodifiableSet(new LinkedHashSet<>(objectStatements));
         return this;
     }
 
+    /**
+     * @param objectStatements set of SODA statement models
+     * @return this bolt instance
+     * @deprecated Use {@link #addObjectStatements(Set)} instead.
+     */
+    @Deprecated
+    public EsperBolt addObjectStatemens(Set<EPStatementObjectModel> objectStatements) {
+        return addObjectStatements(objectStatements);
+    }
+
     private <O> O exceptionIfNull(String msg, O obj) {
-        exceptionIfAnyNull(msg, obj);
+        if (obj == null) {
+            throw new FailedException(msg);
+        }
         return obj;
     }
 
-    private <O> void exceptionIfAnyNull(String msg, O... obj) {
-        for (O o : obj) {
+    private void exceptionIfAnyNull(String msg, Object... objs) {
+        if (objs == null) {
+            throw new FailedException(msg);
+        }
+        for (Object o : objs) {
+            if (o == null) {
+                throw new FailedException(msg);
+            }
+        }
+    }
+
+    private void exceptionIfCollectionHasNull(String msg, Collection<?> collection) {
+        if (collection == null) {
+            throw new FailedException(msg);
+        }
+        for (Object o : collection) {
             if (o == null) {
                 throw new FailedException(msg);
             }
@@ -144,7 +244,7 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
     /**
      * {@inheritDoc}
      *
-     * @param ofd
+     * @param ofd output fields declarer
      */
     @Override
     public void declareOutputFields(OutputFieldsDeclarer ofd) {
@@ -152,32 +252,30 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
             throw new FailedException("outputTypes cannot be null");
         }
         for (Map.Entry<String, List<String>> outputEventType : this.outputTypes.entrySet()) {
-            List<String> fields = new ArrayList<>();
-            if (outputEventType.getValue() != null) {
-                for (String f : outputEventType.getValue()) {
-                    fields.add(f);
-                }
-            } else {
-                throw new FailedException();
+            List<String> fields = outputEventType.getValue();
+            if (fields == null) {
+                throw new FailedException("Output fields cannot be null");
             }
-            ofd.declareStream(outputEventType.getKey(), new Fields(fields));
+            ofd.declareStream(outputEventType.getKey(), new Fields(new ArrayList<>(fields)));
         }
     }
 
     /**
      * {@inheritDoc}
      *
-     * @param map
-     * @param tc
-     * @param oc
+     * @param map storm configuration map
+     * @param tc topology context
+     * @param oc output collector
      */
     @Override
-    public void prepare(@SuppressWarnings("rawtypes") Map map, TopologyContext tc, OutputCollector oc) {
+    public void prepare(Map<String, Object> map, TopologyContext tc, OutputCollector oc) {
         this.collector = oc;
-        Configuration cepConfig = new Configuration();
         if (this.eventTypes == null || (this.objectStatements == null && this.statements == null)) {
             throw new FailedException("Event types cannot be null and at least one type of statement has to be not null");
         }
+        Configuration cepConfig = new Configuration();
+        cepConfig.getCompiler().getByteCode().setAccessModifiersPublic();
+        cepConfig.getCompiler().getByteCode().setBusModifierEventType(EventTypeBusModifier.BUS);
         for (Map.Entry<GlobalStreamId, Grouping> a : tc.getThisSources().entrySet()) {
             Fields f = tc.getComponentOutputFields(a.getKey());
             if (!this.eventTypes.keySet().containsAll(f.toList())) {
@@ -185,45 +283,89 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
                         + Arrays.toString(this.eventTypes.keySet().toArray())
                         + " Stream Fields=" + Arrays.toString(f.toList().toArray()));
             }
-            cepConfig.addEventType(a.getKey().get_componentId() + "_" + a.getKey().get_streamId(), this.eventTypes);
+            cepConfig.getCommon().addEventType(
+                    a.getKey().get_componentId() + "_" + a.getKey().get_streamId(),
+                    new LinkedHashMap<>(this.eventTypes));
         }
-        this.epService = EPServiceProviderManager.getDefaultProvider(cepConfig);
-        this.epService.initialize();
-        if (!processStatemens()) {
+        String runtimeUri = tc.getThisComponentId() + "_" + tc.getThisTaskId() + "_" + UUID.randomUUID();
+        this.epRuntime = EPRuntimeProvider.getRuntime(runtimeUri, cepConfig);
+        this.epRuntime.initialize();
+        if (!processStatements(cepConfig)) {
             throw new FailedException("At least one type of statement has to be not empty");
         }
     }
 
-    private boolean processStatemens() {
-        boolean hasStatemens = false;
+    private boolean processStatements(Configuration cepConfig) {
+        boolean hasStatements = false;
         if (this.statements != null) {
             for (String s : this.statements) {
-                this.epService.getEPAdministrator().createEPL(s).addListener(this);
-                hasStatemens = true;
+                deployStatement(s, cepConfig);
+                hasStatements = true;
             }
         }
         if (this.objectStatements != null) {
             for (EPStatementObjectModel s : this.objectStatements) {
-                this.epService.getEPAdministrator().create(s).addListener(this);
-                hasStatemens = true;
+                deployObjectStatement(s, cepConfig);
+                hasStatements = true;
             }
         }
-        return hasStatemens;
+        return hasStatements;
+    }
+
+    private void deployStatement(String epl, Configuration cepConfig) {
+        try {
+            CompilerArguments args = new CompilerArguments(cepConfig);
+            args.getPath().add(this.epRuntime.getRuntimePath());
+            EPCompiled compiled = EPCompilerProvider.getCompiler().compile(epl, args);
+            EPDeployment deployment = this.epRuntime.getDeploymentService().deploy(compiled);
+            for (EPStatement stmt : deployment.getStatements()) {
+                stmt.addListener(this);
+            }
+        } catch (EPCompileException | EPDeployException e) {
+            throw new FailedException("Failed to compile or deploy EPL statement: " + e.getMessage(), e);
+        }
+    }
+
+    private void deployObjectStatement(EPStatementObjectModel model, Configuration cepConfig) {
+        try {
+            CompilerArguments args = new CompilerArguments(cepConfig);
+            args.getPath().add(this.epRuntime.getRuntimePath());
+            Module module = new Module();
+            module.getItems().add(new ModuleItem(model));
+            EPCompiled compiled = EPCompilerProvider.getCompiler().compile(module, args);
+            EPDeployment deployment = this.epRuntime.getDeploymentService().deploy(compiled);
+            for (EPStatement stmt : deployment.getStatements()) {
+                stmt.addListener(this);
+            }
+        } catch (EPCompileException | EPDeployException e) {
+            throw new FailedException("Failed to compile or deploy SODA statement: " + e.getMessage(), e);
+        }
     }
 
     /**
      * {@inheritDoc}
      *
-     * @param tuple
+     * @param tuple incoming Storm tuple
      */
     @Override
     public void execute(Tuple tuple) {
-        Map<String, Object> tuplesper = new HashMap<>();
-        for (String f : tuple.getFields()) {
-            tuplesper.put(f, tuple.getValueByField(f));
+        try {
+            Map<String, Object> tuplesper = new HashMap<>();
+            for (String f : tuple.getFields()) {
+                tuplesper.put(f, tuple.getValueByField(f));
+            }
+            this.epRuntime.getEventService().sendEventMap(
+                    tuplesper,
+                    tuple.getSourceComponent() + "_" + tuple.getSourceStreamId());
+            collector.ack(tuple);
+        } catch (Exception e) {
+            if (collector != null) {
+                collector.reportError(e);
+                collector.fail(tuple);
+            } else {
+                throw new FailedException(e);
+            }
         }
-        this.epService.getEPRuntime().sendEvent(tuplesper, tuple.getSourceComponent() + "_" + tuple.getSourceStreamId());
-        collector.ack(tuple);
     }
 
     /**
@@ -231,39 +373,47 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
      */
     @Override
     public void cleanup() {
-        if (this.epService != null) {
-            this.epService.destroy();
+        if (this.epRuntime != null) {
+            this.epRuntime.destroy();
         }
     }
 
     /**
      * {@inheritDoc}
      *
-     * @param newEvents
-     * @param oldEvents
+     * @param newEvents newly matching events
+     * @param oldEvents expired events
+     * @param statement the statement producing the update
+     * @param runtime the Esper runtime
      */
     @Override
-    public void update(EventBean[] newEvents, EventBean[] oldEvents) {
+    public void update(EventBean[] newEvents, EventBean[] oldEvents, EPStatement statement, EPRuntime runtime) {
         if (newEvents == null) {
             return;
         }
-        for (EventBean newEvent : newEvents) {
-            List<Object> tuple = new ArrayList<>();
-            String eventType;
-            if (outputTypes.containsKey(newEvent.getEventType().getName())) {
-                eventType = newEvent.getEventType().getName();
-                for (String field : outputTypes.get(newEvent.getEventType().getName())) {
-                    if (newEvent.get(field) != null) {
+        try {
+            for (EventBean newEvent : newEvents) {
+                List<Object> tuple = new ArrayList<>();
+                String eventTypeName = newEvent.getEventType().getName();
+                if (outputTypes != null && outputTypes.containsKey(eventTypeName)) {
+                    for (String field : outputTypes.get(eventTypeName)) {
                         tuple.add(newEvent.get(field));
                     }
-                }
-            } else {
-                eventType = "default";
-                for (String field : newEvent.getEventType().getPropertyNames()) {
-                    tuple.add(newEvent.get(field));
+                    collector.emit(eventTypeName, tuple);
+                } else if (outputTypes != null && outputTypes.containsKey("default")) {
+                    for (String field : outputTypes.get("default")) {
+                        tuple.add(newEvent.get(field));
+                    }
+                    collector.emit("default", tuple);
+                } else {
+                    throw new EsperBoltException(
+                            "Received event for undeclared output stream '" + eventTypeName + "'");
                 }
             }
-            collector.emit(eventType, tuple);
+        } catch (Exception e) {
+            if (collector != null) {
+                collector.reportError(e);
+            }
         }
     }
 

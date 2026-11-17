@@ -15,18 +15,19 @@
  */
 package com.variacode.cep.storm.esper;
 
-import com.espertech.esper.client.soda.EPStatementObjectModel;
-import com.espertech.esper.client.soda.Expressions;
-import com.espertech.esper.client.soda.Filter;
-import com.espertech.esper.client.soda.FilterStream;
-import com.espertech.esper.client.soda.FromClause;
-import com.espertech.esper.client.soda.InsertIntoClause;
-import com.espertech.esper.client.soda.SelectClause;
+import com.espertech.esper.common.client.soda.EPStatementObjectModel;
+import com.espertech.esper.common.client.soda.Expressions;
+import com.espertech.esper.common.client.soda.Filter;
+import com.espertech.esper.common.client.soda.FilterStream;
+import com.espertech.esper.common.client.soda.FromClause;
+import com.espertech.esper.common.client.soda.InsertIntoClause;
+import com.espertech.esper.common.client.soda.SelectClause;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Queue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -43,27 +44,27 @@ import org.apache.storm.tuple.Fields;
 import org.apache.storm.tuple.Tuple;
 import org.apache.storm.tuple.Values;
 import org.apache.storm.utils.Utils;
-import org.junit.Test;
-import static org.junit.Assert.*;
+import org.junit.jupiter.api.Test;
+import static org.junit.jupiter.api.Assertions.*;
 
 public class EsperBoltTest {
 
-    private static Map<Integer, Double> resultEPL = new HashMap<>();
-    private static Map<Integer, Double> resultSODA = new HashMap<>();
+    private static Map<Integer, Double> resultEPL = new ConcurrentHashMap<>();
+    private static Map<Integer, Double> resultSODA = new ConcurrentHashMap<>();
 
     private static final String LITERAL_SYMBOL = "symbol";
     private static final String LITERAL_PRICE = "price";
     private static final String LITERAL_RETURN_OBJ = "Result";
     private static final String LITERAL_AVG = "avg";
     private static final String LITERAL_ESPER = "esper";
-    private static final String LITERAL_QUOTES ="quotes";
+    private static final String LITERAL_QUOTES = "quotes";
 
     /**
      * Test of execute method, of class EsperBolt.
      */
     @Test
-    public void testSODA() {
-        resultSODA = new HashMap<>();
+    public void testSODA() throws Exception {
+        resultSODA = new ConcurrentHashMap<>();
 
         Logger.getLogger(EsperBoltTest.class.getName()).log(Level.INFO, "EngineTest-SODA");
 
@@ -81,7 +82,7 @@ public class EsperBoltTest {
         Filter filter = Filter.create("quotes_default", Expressions.eq(LITERAL_SYMBOL, "A"));
         model.setFromClause(FromClause.create(
                 FilterStream.create(filter)
-                .addView("win", "length", Expressions.constant(2))
+                        .addView("win", "length", Expressions.constant(2))
         ));
         model.setHavingClause(Expressions.gt(Expressions.avg(LITERAL_PRICE), Expressions.constant(60.0)));
 
@@ -90,25 +91,26 @@ public class EsperBoltTest {
         builder.setBolt(LITERAL_ESPER, (new EsperBolt())
                 .addEventTypes(eventTypes)
                 .addOutputTypes(Collections.singletonMap(LITERAL_RETURN_OBJ, Arrays.asList(LITERAL_AVG, LITERAL_PRICE)))
-                .addObjectStatemens(Collections.singleton(model)))
+                .addObjectStatements(Collections.singleton(model)))
                 .shuffleGrouping(LITERAL_QUOTES);
         builder.setBolt("print", new PrinterBolt()).shuffleGrouping(LITERAL_ESPER, LITERAL_RETURN_OBJ);
 
         Config conf = new Config();
-        LocalCluster cluster = new LocalCluster();
-        cluster.submitTopology("test", conf, builder.createTopology());
-        Utils.sleep(10000);
-        cluster.shutdown();
-        assertEquals(resultSODA.get(100), new Double(75.0));
-        assertEquals(resultSODA.get(50), new Double(75.0));
+        conf.put(Config.STORM_LOCAL_HOSTNAME, "localhost");
+        try (LocalCluster cluster = new LocalCluster()) {
+            cluster.submitTopology("test", conf, builder.createTopology());
+            Utils.sleep(10000);
+        }
+        assertEquals(Double.valueOf(75.0), resultSODA.get(100));
+        assertEquals(Double.valueOf(75.0), resultSODA.get(50));
     }
 
     /**
      * Test of execute method, of class EsperBolt.
      */
     @Test
-    public void testEPL() {
-        resultEPL = new HashMap<>();
+    public void testEPL() throws Exception {
+        resultEPL = new ConcurrentHashMap<>();
 
         Logger.getLogger(EsperBoltTest.class.getName()).log(Level.INFO, "EngineTest-EPL");
 
@@ -123,25 +125,28 @@ public class EsperBoltTest {
                 .addEventTypes(eventTypes)
                 .addOutputTypes(Collections.singletonMap(LITERAL_RETURN_OBJ, Arrays.asList(LITERAL_AVG, LITERAL_PRICE)))
                 .addStatements(Collections.singleton("insert into Result "
-                                + "select avg(price) as avg, price from "
-                                + "quotes_default(symbol='A').win:length(2) "
-                                + "having avg(price) > 60.0")))
+                        + "select avg(price) as avg, price from "
+                        + "quotes_default(symbol='A').win:length(2) "
+                        + "having avg(price) > 60.0")))
                 .shuffleGrouping(LITERAL_QUOTES);
         builder.setBolt("print", new PrinterBolt()).shuffleGrouping(LITERAL_ESPER, LITERAL_RETURN_OBJ);
 
         Config conf = new Config();
-        LocalCluster cluster = new LocalCluster();
-        cluster.submitTopology("test", conf, builder.createTopology());
-        Utils.sleep(10000);
-        cluster.shutdown();
-        assertEquals(resultEPL.get(100), new Double(75.0));
-        assertEquals(resultEPL.get(50), new Double(75.0));
+        conf.put(Config.STORM_LOCAL_HOSTNAME, "localhost");
+        try (LocalCluster cluster = new LocalCluster()) {
+            cluster.submitTopology("test", conf, builder.createTopology());
+            Utils.sleep(10000);
+        }
+        assertEquals(Double.valueOf(75.0), resultEPL.get(100));
+        assertEquals(Double.valueOf(75.0), resultEPL.get(50));
     }
 
     /**
      *
      */
     public static class PrinterBolt extends BaseBasicBolt {
+
+        private static final long serialVersionUID = 1L;
 
         /**
          *
@@ -170,6 +175,8 @@ public class EsperBoltTest {
      */
     public static class RandomSentenceSpout extends BaseRichSpout {
 
+        private static final long serialVersionUID = 1L;
+
         transient Queue<HashMap.SimpleEntry<String, Integer>> data;
         transient SpoutOutputCollector collector;
         transient int i;
@@ -181,7 +188,7 @@ public class EsperBoltTest {
          * @param collector
          */
         @Override
-        public void open(Map conf, TopologyContext context, SpoutOutputCollector collector) {
+        public void open(Map<String, Object> conf, TopologyContext context, SpoutOutputCollector collector) {
             this.collector = collector;
             data = new ConcurrentLinkedQueue<>();
             data.add(new HashMap.SimpleEntry<>("A", 50));
