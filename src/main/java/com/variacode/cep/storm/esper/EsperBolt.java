@@ -15,9 +15,9 @@
  */
 package com.variacode.cep.storm.esper;
 
-import com.espertech.esper.common.client.configuration.Configuration;
 import com.espertech.esper.common.client.EPCompiled;
 import com.espertech.esper.common.client.EventBean;
+import com.espertech.esper.common.client.configuration.Configuration;
 import com.espertech.esper.common.client.module.Module;
 import com.espertech.esper.common.client.module.ModuleItem;
 import com.espertech.esper.common.client.soda.EPStatementObjectModel;
@@ -53,6 +53,7 @@ import org.apache.storm.topology.OutputFieldsDeclarer;
 import org.apache.storm.topology.base.BaseRichBolt;
 import org.apache.storm.tuple.Fields;
 import org.apache.storm.tuple.Tuple;
+import org.apache.storm.utils.Utils;
 
 /**
  * Storm Bolt that embeds an Esper runtime instance for Complex Event Processing.
@@ -63,8 +64,10 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
 
     private OutputCollector collector;
     private transient EPRuntime epRuntime;
+    private transient Tuple currentTuple;
     private Map<String, List<String>> outputTypes;
     private Map<String, Object> eventTypes;
+    private Map<String, Map<String, Object>> streamEventTypes;
     private Set<String> statements;
     private Set<EPStatementObjectModel> objectStatements;
 
@@ -91,6 +94,9 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
         exceptionIfCollectionHasNull(error, types.keySet());
         exceptionIfCollectionHasNull(error, types.values());
         Map<String, List<String>> copy = new LinkedHashMap<>();
+        if (this.outputTypes != null) {
+            copy.putAll(this.outputTypes);
+        }
         for (Map.Entry<String, List<String>> entry : types.entrySet()) {
             List<String> fields = entry.getValue();
             exceptionIfCollectionHasNull(error, fields);
@@ -132,9 +138,6 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
         }
         exceptionIfCollectionHasNull(error, beans);
         Map<String, List<String>> types = new LinkedHashMap<>();
-        if (this.outputTypes != null) {
-            types.putAll(this.outputTypes);
-        }
         for (Class<?> bean : beans) {
             List<String> fields = new ArrayList<>();
             for (Field f : bean.getDeclaredFields()) {
@@ -148,6 +151,55 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
     }
 
     public EsperBolt addEventTypes(Class<?> bean) {
+        return addEventTypes(extractBeanEventTypes(bean));
+    }
+
+    /**
+     * Declares input event property names and their types for a specific upstream component and stream.
+     *
+     * @param componentId upstream component ID
+     * @param streamId upstream stream ID
+     * @param bean POJO class describing the stream's event properties
+     * @return this bolt instance
+     */
+    public EsperBolt addEventTypes(String componentId, String streamId, Class<?> bean) {
+        return addEventTypes(componentId, streamId, extractBeanEventTypes(bean));
+    }
+
+    /**
+     * Declares input event property names and their types for a specific upstream component (default stream).
+     *
+     * @param componentId upstream component ID
+     * @param bean POJO class describing the component's event properties
+     * @return this bolt instance
+     */
+    public EsperBolt addEventTypes(String componentId, Class<?> bean) {
+        return addEventTypes(componentId, Utils.DEFAULT_STREAM_ID, extractBeanEventTypes(bean));
+    }
+
+    /**
+     * Declares input event property names and their types for a specific upstream component and stream.
+     *
+     * @param componentId upstream component ID
+     * @param streamId upstream stream ID
+     * @param types map from field name to Java type
+     * @return this bolt instance
+     */
+    public EsperBolt addEventTypes(String componentId, String streamId, Map<String, Object> types) {
+        String error = "Event types cannot be null";
+        exceptionIfAnyNull(error, componentId, streamId, types);
+        exceptionIfCollectionHasNull(error, types.keySet());
+        exceptionIfCollectionHasNull(error, types.values());
+        Map<String, Map<String, Object>> copy = new LinkedHashMap<>();
+        if (this.streamEventTypes != null) {
+            copy.putAll(this.streamEventTypes);
+        }
+        copy.put(componentId + "_" + streamId, Collections.unmodifiableMap(new LinkedHashMap<>(types)));
+        this.streamEventTypes = Collections.unmodifiableMap(copy);
+        return this;
+    }
+
+    private Map<String, Object> extractBeanEventTypes(Class<?> bean) {
         String error = "Event types cannot be null";
         exceptionIfNull(error, bean);
         Map<String, Object> types = new LinkedHashMap<>();
@@ -156,7 +208,7 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
                 types.put(f.getName(), f.getType());
             }
         }
-        return addEventTypes(types);
+        return types;
     }
 
     /**
@@ -170,7 +222,12 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
         exceptionIfNull(error, types);
         exceptionIfCollectionHasNull(error, types.keySet());
         exceptionIfCollectionHasNull(error, types.values());
-        this.eventTypes = Collections.unmodifiableMap(new LinkedHashMap<>(types));
+        Map<String, Object> copy = new LinkedHashMap<>();
+        if (this.eventTypes != null) {
+            copy.putAll(this.eventTypes);
+        }
+        copy.putAll(types);
+        this.eventTypes = Collections.unmodifiableMap(copy);
         return this;
     }
 
@@ -184,7 +241,12 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
         String error = "Statements cannot be null";
         exceptionIfNull(error, statements);
         exceptionIfCollectionHasNull(error, statements);
-        this.statements = Collections.unmodifiableSet(new LinkedHashSet<>(statements));
+        Set<String> copy = new LinkedHashSet<>();
+        if (this.statements != null) {
+            copy.addAll(this.statements);
+        }
+        copy.addAll(statements);
+        this.statements = Collections.unmodifiableSet(copy);
         return this;
     }
 
@@ -198,7 +260,12 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
         final String error = "Object Statements cannot be null";
         exceptionIfNull(error, objectStatements);
         exceptionIfCollectionHasNull(error, objectStatements);
-        this.objectStatements = Collections.unmodifiableSet(new LinkedHashSet<>(objectStatements));
+        Set<EPStatementObjectModel> copy = new LinkedHashSet<>();
+        if (this.objectStatements != null) {
+            copy.addAll(this.objectStatements);
+        }
+        copy.addAll(objectStatements);
+        this.objectStatements = Collections.unmodifiableSet(copy);
         return this;
     }
 
@@ -270,26 +337,28 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
     @Override
     public void prepare(Map<String, Object> map, TopologyContext tc, OutputCollector oc) {
         this.collector = oc;
-        if (this.eventTypes == null || (this.objectStatements == null && this.statements == null)) {
+        if ((this.eventTypes == null && this.streamEventTypes == null)
+                || (this.objectStatements == null && this.statements == null)) {
             throw new FailedException("Event types cannot be null and at least one type of statement has to be not null");
         }
         Configuration cepConfig = new Configuration();
         cepConfig.getCompiler().getByteCode().setAccessModifiersPublic();
         cepConfig.getCompiler().getByteCode().setBusModifierEventType(EventTypeBusModifier.BUS);
         for (Map.Entry<GlobalStreamId, Grouping> a : tc.getThisSources().entrySet()) {
+            String streamKey = a.getKey().get_componentId() + "_" + a.getKey().get_streamId();
+            Map<String, Object> targetEventTypes = (this.streamEventTypes != null && this.streamEventTypes.containsKey(streamKey))
+                    ? this.streamEventTypes.get(streamKey)
+                    : this.eventTypes;
             Fields f = tc.getComponentOutputFields(a.getKey());
-            if (!this.eventTypes.keySet().containsAll(f.toList())) {
+            if (targetEventTypes == null || !targetEventTypes.keySet().containsAll(f.toList())) {
                 throw new FailedException("Event types and fields from source streams do not match: Event Types="
-                        + Arrays.toString(this.eventTypes.keySet().toArray())
+                        + (targetEventTypes == null ? "null" : Arrays.toString(targetEventTypes.keySet().toArray()))
                         + " Stream Fields=" + Arrays.toString(f.toList().toArray()));
             }
-            cepConfig.getCommon().addEventType(
-                    a.getKey().get_componentId() + "_" + a.getKey().get_streamId(),
-                    new LinkedHashMap<>(this.eventTypes));
+            cepConfig.getCommon().addEventType(streamKey, new LinkedHashMap<>(targetEventTypes));
         }
         String runtimeUri = tc.getThisComponentId() + "_" + tc.getThisTaskId() + "_" + UUID.randomUUID();
         this.epRuntime = EPRuntimeProvider.getRuntime(runtimeUri, cepConfig);
-        this.epRuntime.initialize();
         if (!processStatements(cepConfig)) {
             throw new FailedException("At least one type of statement has to be not empty");
         }
@@ -349,6 +418,7 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
      */
     @Override
     public void execute(Tuple tuple) {
+        this.currentTuple = tuple;
         try {
             Map<String, Object> tuplesper = new HashMap<>();
             for (String f : tuple.getFields()) {
@@ -365,6 +435,8 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
             } else {
                 throw new FailedException(e);
             }
+        } finally {
+            this.currentTuple = null;
         }
     }
 
@@ -395,19 +467,22 @@ public class EsperBolt extends BaseRichBolt implements UpdateListener {
             for (EventBean newEvent : newEvents) {
                 List<Object> tuple = new ArrayList<>();
                 String eventTypeName = newEvent.getEventType().getName();
+                String targetStream;
                 if (outputTypes != null && outputTypes.containsKey(eventTypeName)) {
-                    for (String field : outputTypes.get(eventTypeName)) {
-                        tuple.add(newEvent.get(field));
-                    }
-                    collector.emit(eventTypeName, tuple);
+                    targetStream = eventTypeName;
                 } else if (outputTypes != null && outputTypes.containsKey("default")) {
-                    for (String field : outputTypes.get("default")) {
-                        tuple.add(newEvent.get(field));
-                    }
-                    collector.emit("default", tuple);
+                    targetStream = "default";
                 } else {
                     throw new EsperBoltException(
                             "Received event for undeclared output stream '" + eventTypeName + "'");
+                }
+                for (String field : outputTypes.get(targetStream)) {
+                    tuple.add(newEvent.get(field));
+                }
+                if (this.currentTuple != null) {
+                    collector.emit(targetStream, this.currentTuple, tuple);
+                } else {
+                    collector.emit(targetStream, tuple);
                 }
             }
         } catch (Exception e) {
